@@ -213,7 +213,9 @@ __global__ void linearProjection(float* input, float* weight, float* output, int
 
 Mathematically, for each element:
 
+
 $$(XW)_{ij} = \sum_{k=1}^d X_{ik} W_{kj}$$
+
 
 ## 3. Attention Calculation
 
@@ -227,7 +229,9 @@ Let's break this down step by step:
 
 First, we compute the dot product of Q and K^T:
 
+
 $$(QK^T)_{ij} = \sum_{k=1}^{d_k} Q_{ik} K_{jk}$$
+
 
 In the script, this is the first part of the `attention` kernel:
 
@@ -254,7 +258,9 @@ QK[row * seq_len + col] = sum / sqrtf((float)d_model);
 
 We apply the softmax function to each row of S:
 
+
 $$\text{softmax}(S_i)_j = \frac{e^{S_{ij}}}{\sum_{k=1}^s e^{S_{ik}}}$$
+
 
 This is implemented in the `softmax` device function:
 
@@ -268,7 +274,9 @@ Finally, we multiply the softmax output with V:
 
 $$A = \text{softmax}(S)V$$
 
-Where $A_{ij} = \sum_{k=1}^s \text{softmax}(S_i)_k V_{kj}$
+Where 
+
+$A_{ij} = \sum_{k=1}^s \text{softmax}(S_i)_k V_{kj}$
 
 This is the last part of the `attention` kernel:
 
