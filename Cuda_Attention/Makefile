@@ -10,12 +10,12 @@ TARGET = basic_attention
 all: $(TARGET)
 
 $(TARGET): basic_attention.cu
-	$(NVCC) $(NVCC_FLAGS) -o $@ $
+        $(NVCC) $(NVCC_FLAGS) -o $@ $<
 
 run: $(TARGET)
-	./$(TARGET)
+        ./$(TARGET)
 
 clean:
-	rm -f $(TARGET)
+        rm -f $(TARGET)
 
 .PHONY: all run clean
