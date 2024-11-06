@@ -7,9 +7,20 @@
 
 // Configuration
 #define TILE_SIZE 32        // Reduced tile size for better occupancy
-#define HEAD_DIM 64
+//#define HEAD_DIM 64
 #define THREADS_PER_BLOCK 256
 #define WARP_SIZE 32
+
+// Add this function near the top after includes:
+void print_usage() {
+    printf("Usage: ./flash_attention <batch_size> <num_heads> <seq_len> <head_dim>\n");
+    printf("Example: ./flash_attention 32 8 512 64\n");
+    printf("Parameters:\n");
+    printf("  batch_size: Number of sequences to process in parallel\n");
+    printf("  num_heads: Number of attention heads\n");
+    printf("  seq_len: Length of input sequences\n");
+    printf("  head_dim: Dimension of each attention head\n");
+}
 
 // Error checking macro
 #define CUDA_CHECK(call) \
@@ -142,13 +153,43 @@ __global__ void flash_attention_kernel(
     }
 }
 
-int main() {
-    // Problem dimensions
-    const int batch_size = 1;
-    const int num_heads = 8;
-    const int seq_len = 512;
-    const int head_dim = 64;
+
+// Modify main function signature to accept parameters
+int main(int argc, char** argv) {
+    // Parameter parsing
+    if (argc != 5) {
+        printf("Error: Incorrect number of arguments\n");
+        print_usage();
+        return 1;
+    }
+
+    // Parse command line arguments
+    const int batch_size = atoi(argv[1]);
+    const int num_heads = atoi(argv[2]);
+    const int seq_len = atoi(argv[3]);
+    const int head_dim = atoi(argv[4]);
     const int d_model = head_dim * num_heads;
+
+    // Add parameter validation
+    if (batch_size <= 0 || num_heads <= 0 || seq_len <= 0 || head_dim <= 0) {
+        printf("Error: All parameters must be positive integers\n");
+        print_usage();
+        return 1;
+    }
+
+    // Additional validation specific to Flash implementation
+    if (head_dim > TILE_SIZE * TILE_SIZE) {
+        printf("Error: head_dim (%d) exceeds maximum supported size (%d)\n", 
+               head_dim, TILE_SIZE * TILE_SIZE);
+        return 1;
+    }
+
+    // Problem dimensions
+    //const int batch_size = 1;
+    //const int num_heads = 8;
+    //const int seq_len = 512;
+    //const int head_dim = 64;
+    //const int d_model = head_dim * num_heads;
     
     printf("\nProblem Configuration:\n");
     printf("Batch size: %d\n", batch_size);

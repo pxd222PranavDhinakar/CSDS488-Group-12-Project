@@ -9,6 +9,17 @@
 #define BLOCK_SIZE 16
 #define MAX_THREADS 1024
 
+// Add this function near the top after includes:
+void print_usage() {
+    printf("Usage: ./basic_attention <batch_size> <num_heads> <seq_len> <head_dim>\n");
+    printf("Example: ./basic_attention 32 8 512 64\n");
+    printf("Parameters:\n");
+    printf("  batch_size: Number of sequences to process in parallel\n");
+    printf("  num_heads: Number of attention heads\n");
+    printf("  seq_len: Length of input sequences\n");
+    printf("  head_dim: Dimension of each attention head\n");
+}
+
 // Error checking macro
 #define CUDA_CHECK(call) \
     do { \
@@ -101,13 +112,35 @@ void print_matrix_info(const char* name, float* matrix, int rows, int cols) {
     printf("\n");
 }
 
-int main() {
-    // Problem dimensions
-    const int batch_size = 1;
-    const int num_heads = 8;
-    const int seq_len = 512;
-    const int head_dim = 64;
+// Modify main function signature to accept parameters
+int main(int argc, char** argv) {
+    // Parameter parsing
+    if (argc != 5) {
+        printf("Error: Incorrect number of arguments\n");
+        print_usage();
+        return 1;
+    }
+
+    // Parse command line arguments
+    const int batch_size = atoi(argv[1]);
+    const int num_heads = atoi(argv[2]);
+    const int seq_len = atoi(argv[3]);
+    const int head_dim = atoi(argv[4]);
     const int d_model = head_dim * num_heads;
+
+    // Add parameter validation
+    if (batch_size <= 0 || num_heads <= 0 || seq_len <= 0 || head_dim <= 0) {
+        printf("Error: All parameters must be positive integers\n");
+        print_usage();
+        return 1;
+    }
+
+    // Problem dimensions
+    //const int batch_size = 1;
+    //const int num_heads = 8;
+    //const int seq_len = 512;
+    //const int head_dim = 64;
+    //const int d_model = head_dim * num_heads;
     
     printf("\nProblem Configuration:\n");
     printf("Batch size: %d\n", batch_size);
