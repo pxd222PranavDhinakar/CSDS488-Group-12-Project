@@ -7,11 +7,10 @@
 
 // Configuration
 #define TILE_SIZE 32        // Reduced tile size for better occupancy
-//#define HEAD_DIM 64
 #define THREADS_PER_BLOCK 256
 #define WARP_SIZE 32
 
-// Add this function near the top after includes:
+// Usage information
 void print_usage() {
     printf("Usage: ./flash_attention <batch_size> <num_heads> <seq_len> <head_dim>\n");
     printf("Example: ./flash_attention 32 8 512 64\n");
@@ -33,12 +32,10 @@ void print_usage() {
         } \
     } while(0)
 
-// Shared memory structure
-struct SharedMemory {
-    float q[TILE_SIZE][HEAD_DIM];
-    float k[TILE_SIZE][HEAD_DIM];
-    float v[TILE_SIZE][HEAD_DIM];
-};
+// Helper function to calculate shared memory size
+__host__ size_t calculateSharedMemorySize(int head_dim) {
+    return sizeof(float) * TILE_SIZE * head_dim * 3;  // For Q, K, and V
+}
 
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -72,24 +69,28 @@ __global__ void flash_attention_kernel(
     float* __restrict__ O,
     float* __restrict__ M,
     float* __restrict__ L,
-    const int seq_len) {
+    const int seq_len,
+    const int head_dim) {
     
     extern __shared__ char shared_mem[];
-    SharedMemory* shared = reinterpret_cast<SharedMemory*>(shared_mem);
+    float* q_ptr = (float*)shared_mem;
+    float* k_ptr = q_ptr + TILE_SIZE * head_dim;
+    float* v_ptr = k_ptr + TILE_SIZE * head_dim;
     
     const int row_block = blockIdx.x * TILE_SIZE;
     const int tid = threadIdx.x;
-    const float scale = 1.0f / sqrtf(HEAD_DIM);
+    const float scale = 1.0f / sqrtf(head_dim);
     
     // Each thread handles one or more rows
     for (int row = tid; row < TILE_SIZE && row_block + row < seq_len; row += blockDim.x) {
         float max_val = -INFINITY;
         float sum_exp = 0.0f;
-        float acc[HEAD_DIM] = {0.0f};
+        float* acc = (float*)malloc(head_dim * sizeof(float));
+        memset(acc, 0, head_dim * sizeof(float));
         
         // Load Q row into shared memory
-        for (int k = 0; k < HEAD_DIM; k++) {
-            shared->q[row][k] = Q[(row_block + row) * HEAD_DIM + k];
+        for (int k = 0; k < head_dim; k++) {
+            q_ptr[row * head_dim + k] = Q[(row_block + row) * head_dim + k];
         }
         
         // Process K,V tiles
@@ -98,9 +99,9 @@ __global__ void flash_attention_kernel(
             
             // Load K,V tile
             for (int i = tid; i < TILE_SIZE && tile + i < seq_len; i += blockDim.x) {
-                for (int k = 0; k < HEAD_DIM; k++) {
-                    shared->k[i][k] = K[(tile + i) * HEAD_DIM + k];
-                    shared->v[i][k] = V[(tile + i) * HEAD_DIM + k];
+                for (int k = 0; k < head_dim; k++) {
+                    k_ptr[i * head_dim + k] = K[(tile + i) * head_dim + k];
+                    v_ptr[i * head_dim + k] = V[(tile + i) * head_dim + k];
                 }
             }
             __syncthreads();
@@ -112,8 +113,8 @@ __global__ void flash_attention_kernel(
             
             for (int j = 0; j < valid_cols; j++) {
                 float qk_sum = 0.0f;
-                for (int k = 0; k < HEAD_DIM; k++) {
-                    qk_sum += shared->q[row][k] * shared->k[j][k];
+                for (int k = 0; k < head_dim; k++) {
+                    qk_sum += q_ptr[row * head_dim + k] * k_ptr[j * head_dim + k];
                 }
                 scores[j] = qk_sum * scale;
                 local_max = fmaxf(local_max, scores[j]);
@@ -122,7 +123,7 @@ __global__ void flash_attention_kernel(
             // Update global max and rescale previous terms if needed
             if (local_max > max_val) {
                 float scale_factor = expf(max_val - local_max);
-                for (int k = 0; k < HEAD_DIM; k++) {
+                for (int k = 0; k < head_dim; k++) {
                     acc[k] *= scale_factor;
                 }
                 sum_exp *= scale_factor;
@@ -134,8 +135,8 @@ __global__ void flash_attention_kernel(
             for (int j = 0; j < valid_cols; j++) {
                 float exp_val = expf(scores[j] - max_val);
                 local_sum += exp_val;
-                for (int k = 0; k < HEAD_DIM; k++) {
-                    acc[k] += exp_val * shared->v[j][k];
+                for (int k = 0; k < head_dim; k++) {
+                    acc[k] += exp_val * v_ptr[j * head_dim + k];
                 }
             }
             sum_exp += local_sum;
@@ -146,15 +147,15 @@ __global__ void flash_attention_kernel(
             M[row_block + row] = max_val;
             L[row_block + row] = sum_exp;
             float inv_sum = 1.0f / sum_exp;
-            for (int k = 0; k < HEAD_DIM; k++) {
-                O[(row_block + row) * HEAD_DIM + k] = acc[k] * inv_sum;
+            for (int k = 0; k < head_dim; k++) {
+                O[(row_block + row) * head_dim + k] = acc[k] * inv_sum;
             }
         }
+        
+        free(acc);
     }
 }
 
-
-// Modify main function signature to accept parameters
 int main(int argc, char** argv) {
     // Parameter parsing
     if (argc != 5) {
@@ -183,13 +184,6 @@ int main(int argc, char** argv) {
                head_dim, TILE_SIZE * TILE_SIZE);
         return 1;
     }
-
-    // Problem dimensions
-    //const int batch_size = 1;
-    //const int num_heads = 8;
-    //const int seq_len = 512;
-    //const int head_dim = 64;
-    //const int d_model = head_dim * num_heads;
     
     printf("\nProblem Configuration:\n");
     printf("Batch size: %d\n", batch_size);
@@ -268,7 +262,7 @@ int main(int argc, char** argv) {
     // Flash attention computation
     CUDA_CHECK(cudaEventRecord(attn_start));
     
-    size_t shared_mem_size = sizeof(SharedMemory);
+    size_t shared_mem_size = calculateSharedMemorySize(head_dim);
     int num_blocks = (seq_len + TILE_SIZE - 1) / TILE_SIZE;
     
     printf("\nLaunching flash attention with configuration:\n");
@@ -287,7 +281,7 @@ int main(int argc, char** argv) {
             float* L_head = d_l + (b * num_heads + h) * seq_len;
             
             flash_attention_kernel<<<num_blocks, THREADS_PER_BLOCK, shared_mem_size>>>(
-                Q_head, K_head, V_head, O_head, M_head, L_head, seq_len
+                Q_head, K_head, V_head, O_head, M_head, L_head, seq_len, head_dim
             );
             CUDA_CHECK(cudaGetLastError());
         }
@@ -302,81 +296,4 @@ int main(int argc, char** argv) {
     float proj_time = 0;
     float attn_time = 0;
     CUDA_CHECK(cudaEventElapsedTime(&total_time, start, stop));
-    CUDA_CHECK(cudaEventElapsedTime(&proj_time, proj_start, proj_stop));
-    CUDA_CHECK(cudaEventElapsedTime(&attn_time, attn_start, attn_stop));
-    
-    printf("\nTiming Results:\n");
-    printf("Linear Projections time: %.3f ms\n", proj_time);
-    printf("Flash Attention time: %.3f ms\n", attn_time);
-    printf("Total execution time: %.3f ms\n", total_time);
-    
-    // Verify results
-    CUDA_CHECK(cudaMemcpy(h_output, d_output, qkv_size, cudaMemcpyDeviceToHost));
-    printf("\nOutput verification (first few values):\n");
-    for (int i = 0; i < 5; i++) {
-        printf("%.4f ", h_output[i]);
-    }
-    printf("\n");
-    
-    float *h_Q = (float*)malloc(qkv_size);
-    float *h_m = (float*)malloc(softmax_stats_size);
-    float *h_l = (float*)malloc(softmax_stats_size);
-    
-    CUDA_CHECK(cudaMemcpy(h_Q, d_Q, qkv_size, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_m, d_m, softmax_stats_size, cudaMemcpyDeviceToHost));
-    CUDA_CHECK(cudaMemcpy(h_l, d_l, softmax_stats_size, cudaMemcpyDeviceToHost));
-
-
-    printf("\nQ matrix verification (first few values):\n");
-    for (int i = 0; i < 5; i++) {
-        printf("%.4f ", h_Q[i]);
-    }
-    printf("\n");
-    
-    printf("\nSoftmax statistics for first row:\n");
-    printf("Max value (m): %.4f\n", h_m[0]);
-    printf("Sum value (l): %.4f\n", h_l[0]);
-    
-    // Validate results
-    bool valid_output = false;
-    for (int i = 0; i < seq_len * head_dim; i++) {
-        if (h_output[i] != 0.0f) {
-            valid_output = true;
-            break;
-        }
-    }
-    
-    if (!valid_output) {
-        printf("\nWarning: Output appears to be all zeros. This might indicate a kernel execution problem.\n");
-    }
-    
-    // Cleanup
-    free(h_input);
-    free(h_W_Q);
-    free(h_W_K);
-    free(h_W_V);
-    free(h_output);
-    free(h_Q);
-    free(h_m);
-    free(h_l);
-    
-    CUDA_CHECK(cudaFree(d_input));
-    CUDA_CHECK(cudaFree(d_W_Q));
-    CUDA_CHECK(cudaFree(d_W_K));
-    CUDA_CHECK(cudaFree(d_W_V));
-    CUDA_CHECK(cudaFree(d_Q));
-    CUDA_CHECK(cudaFree(d_K));
-    CUDA_CHECK(cudaFree(d_V));
-    CUDA_CHECK(cudaFree(d_output));
-    CUDA_CHECK(cudaFree(d_m));
-    CUDA_CHECK(cudaFree(d_l));
-    
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
-    CUDA_CHECK(cudaEventDestroy(proj_start));
-    CUDA_CHECK(cudaEventDestroy(proj_stop));
-    CUDA_CHECK(cudaEventDestroy(attn_start));
-    CUDA_CHECK(cudaEventDestroy(attn_stop));
-    
-    return 0;
-}
+    CUDA_CHECK(cudaEventElapsedTime(&proj_time
