@@ -90,8 +90,9 @@ __global__ void initialize_random_matrix(float* matrix, int rows, int cols,
     }
 }
 
+
 __global__ void matmul_optimized(float* A, float* B, float* C, 
-                                int M, int N, int K, cudaStream_t stream) {
+                                int M, int N, int K) {
     extern __shared__ float shared_mem[];
     float* shared_A = shared_mem;
     float* shared_B = shared_A + TILE_SIZE * TILE_SIZE;
@@ -138,10 +139,11 @@ __global__ void flash_attention_persistent(
     const int num_heads,
     const int batch_size) {
     
-    extern __shared__ char shared_mem[];
-    float* q_ptr = (float*)shared_mem;
+    extern __shared__ float shared_mem[];
+    float* q_ptr = shared_mem;
     float* k_ptr = q_ptr + TILE_SIZE * head_dim;
     float* v_ptr = k_ptr + TILE_SIZE * head_dim;
+    float* scores = v_ptr + TILE_SIZE * head_dim;
     
     const int block_id = blockIdx.x;
     const int thread_id = threadIdx.x;
@@ -149,8 +151,7 @@ __global__ void flash_attention_persistent(
     const int start_head = block_id * heads_per_block;
     const int end_head = min(start_head + heads_per_block, num_heads);
     
-    float acc[MAX_HEAD_DIM];  // Register cache for accumulator
-    __shared__ float scores[TILE_SIZE * TILE_SIZE];
+    float acc[MAX_HEAD_DIM];
     const float scale = 1.0f / sqrtf(head_dim);
     
     // Process multiple heads without kernel relaunch
@@ -160,6 +161,8 @@ __global__ void flash_attention_persistent(
             const float* K_head = K + (b * num_heads + h) * seq_len * head_dim;
             const float* V_head = V + (b * num_heads + h) * seq_len * head_dim;
             float* O_head = O + (b * num_heads + h) * seq_len * head_dim;
+            float* M_head = M + (b * num_heads + h) * seq_len;
+            float* L_head = L + (b * num_heads + h) * seq_len;
             
             for(int row = thread_id; row < seq_len; row += THREADS_PER_BLOCK) {
                 float max_val = -INFINITY;
@@ -228,8 +231,8 @@ __global__ void flash_attention_persistent(
                 
                 // Write output
                 if(row < seq_len) {
-                    M[row] = max_val;
-                    L[row] = sum_exp;
+                    M_head[row] = max_val;
+                    L_head[row] = sum_exp;
                     float inv_sum = 1.0f / sum_exp;
                     #pragma unroll
                     for(int k = 0; k < head_dim; k++) {
@@ -332,11 +335,11 @@ int main(int argc, char** argv) {
             float* K_head = d_mem.d_K + (b * num_heads + h) * seq_len * head_dim;
             float* V_head = d_mem.d_V + (b * num_heads + h) * seq_len * head_dim;
             
-            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem, compute_stream>>>(
+            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem>>>(
                 d_mem.d_input, d_mem.d_W_Q, Q_head, seq_len, d_model, head_dim);
-            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem, compute_stream>>>(
+            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem>>>(
                 d_mem.d_input, d_mem.d_W_K, K_head, seq_len, d_model, head_dim);
-            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem, compute_stream>>>(
+            matmul_optimized<<<proj_grid, proj_block, matmul_shared_mem>>>(
                 d_mem.d_input, d_mem.d_W_V, V_head, seq_len, d_model, head_dim);
         }
     }
