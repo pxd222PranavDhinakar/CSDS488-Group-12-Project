@@ -1,0 +1,5 @@
+Results for flash implementation - Mon Nov 11 15:31:39 EST 2024
+batch_size,num_heads,seq_len,head_dim,proj_time,attn_time,total_time
+16,4,256,32,1.268,16.588,17.861
+32,8,512,64,55.627,127.543,183.174
+64,12,1024,128,809.989,538.247,1348.240
