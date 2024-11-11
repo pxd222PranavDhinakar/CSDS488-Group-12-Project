@@ -295,5 +295,82 @@ int main(int argc, char** argv) {
     float total_time = 0;
     float proj_time = 0;
     float attn_time = 0;
+    
     CUDA_CHECK(cudaEventElapsedTime(&total_time, start, stop));
-    CUDA_CHECK(cudaEventElapsedTime(&proj_time
+    CUDA_CHECK(cudaEventElapsedTime(&proj_time, proj_start, proj_stop));
+    CUDA_CHECK(cudaEventElapsedTime(&attn_time, attn_start, attn_stop));
+    
+    printf("\nTiming Results:\n");
+    printf("Linear Projections time: %.3f ms\n", proj_time);
+    printf("Flash Attention time: %.3f ms\n", attn_time);
+    printf("Total execution time: %.3f ms\n", total_time);
+    
+    // Verify results
+    CUDA_CHECK(cudaMemcpy(h_output, d_output, qkv_size, cudaMemcpyDeviceToHost));
+    printf("\nOutput verification (first few values):\n");
+    for (int i = 0; i < 5; i++) {
+        printf("%.4f ", h_output[i]);
+    }
+    printf("\n");
+    
+    float *h_Q = (float*)malloc(qkv_size);
+    float *h_m = (float*)malloc(softmax_stats_size);
+    float *h_l = (float*)malloc(softmax_stats_size);
+    
+    CUDA_CHECK(cudaMemcpy(h_Q, d_Q, qkv_size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_m, d_m, softmax_stats_size, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(h_l, d_l, softmax_stats_size, cudaMemcpyDeviceToHost));
+
+    printf("\nQ matrix verification (first few values):\n");
+    for (int i = 0; i < 5; i++) {
+        printf("%.4f ", h_Q[i]);
+    }
+    printf("\n");
+    
+    printf("\nSoftmax statistics for first row:\n");
+    printf("Max value (m): %.4f\n", h_m[0]);
+    printf("Sum value (l): %.4f\n", h_l[0]);
+    
+    // Validate results
+    bool valid_output = false;
+    for (int i = 0; i < seq_len * head_dim; i++) {
+        if (h_output[i] != 0.0f) {
+            valid_output = true;
+            break;
+        }
+    }
+    
+    if (!valid_output) {
+        printf("\nWarning: Output appears to be all zeros. This might indicate a kernel execution problem.\n");
+    }
+    
+    // Cleanup
+    free(h_input);
+    free(h_W_Q);
+    free(h_W_K);
+    free(h_W_V);
+    free(h_output);
+    free(h_Q);
+    free(h_m);
+    free(h_l);
+    
+    CUDA_CHECK(cudaFree(d_input));
+    CUDA_CHECK(cudaFree(d_W_Q));
+    CUDA_CHECK(cudaFree(d_W_K));
+    CUDA_CHECK(cudaFree(d_W_V));
+    CUDA_CHECK(cudaFree(d_Q));
+    CUDA_CHECK(cudaFree(d_K));
+    CUDA_CHECK(cudaFree(d_V));
+    CUDA_CHECK(cudaFree(d_output));
+    CUDA_CHECK(cudaFree(d_m));
+    CUDA_CHECK(cudaFree(d_l));
+    
+    CUDA_CHECK(cudaEventDestroy(start));
+    CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaEventDestroy(proj_start));
+    CUDA_CHECK(cudaEventDestroy(proj_stop));
+    CUDA_CHECK(cudaEventDestroy(attn_start));
+    CUDA_CHECK(cudaEventDestroy(attn_stop));
+    
+    return 0;
+}
