@@ -6,8 +6,8 @@
 #include <math.h>
 
 // Configuration
-#define BLOCK_SIZE 16
-#define MAX_THREADS 1024
+#define BLOCK_SIZE 16 // Number of Blocks in Grid
+#define MAX_THREADS 1024 // Maximum number of threads per block
 
 // Add this function near the top after includes:
 void print_usage() {
