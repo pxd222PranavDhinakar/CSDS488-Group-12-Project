@@ -81,40 +81,64 @@ __global__ void flash_attention_kernel(
     const int tid = threadIdx.x;
     const float scale = 1.0f / sqrtf(head_dim);
     
+    // Declare accumulator array in registers
+    float acc[64];  // Assuming max head_dim is 64, adjust if needed
+    
     // Each thread handles one or more rows
     for (int row = tid; row < TILE_SIZE && row_block + row < seq_len; row += blockDim.x) {
         float max_val = -INFINITY;
         float sum_exp = 0.0f;
-        float* acc = (float*)malloc(head_dim * sizeof(float));
-        memset(acc, 0, head_dim * sizeof(float));
         
-        // Load Q row into shared memory
+        // Initialize accumulator
+        #pragma unroll
         for (int k = 0; k < head_dim; k++) {
-            q_ptr[row * head_dim + k] = Q[(row_block + row) * head_dim + k];
+            acc[k] = 0.0f;
+        }
+        
+        // Load Q row into shared memory with vectorized loads
+        float4* q_vec = (float4*)&q_ptr[row * head_dim];
+        const float4* Q_vec = (const float4*)&Q[(row_block + row) * head_dim];
+        #pragma unroll
+        for (int k = 0; k < head_dim/4; k++) {
+            q_vec[k] = Q_vec[k];
         }
         
         // Process K,V tiles
         for (int tile = 0; tile < seq_len; tile += TILE_SIZE) {
             __syncthreads();
             
-            // Load K,V tile
+            // Load K,V tiles with vectorized loads
             for (int i = tid; i < TILE_SIZE && tile + i < seq_len; i += blockDim.x) {
-                for (int k = 0; k < head_dim; k++) {
-                    k_ptr[i * head_dim + k] = K[(tile + i) * head_dim + k];
-                    v_ptr[i * head_dim + k] = V[(tile + i) * head_dim + k];
+                float4* k_vec = (float4*)&k_ptr[i * head_dim];
+                float4* v_vec = (float4*)&v_ptr[i * head_dim];
+                const float4* K_vec = (const float4*)&K[(tile + i) * head_dim];
+                const float4* V_vec = (const float4*)&V[(tile + i) * head_dim];
+                
+                #pragma unroll
+                for (int k = 0; k < head_dim/4; k++) {
+                    k_vec[k] = K_vec[k];
+                    v_vec[k] = V_vec[k];
                 }
             }
             __syncthreads();
             
-            // Compute attention scores and update running max
+            // Compute attention scores with vectorized operations
             float local_max = -INFINITY;
             float scores[TILE_SIZE];
             int valid_cols = min(TILE_SIZE, seq_len - tile);
             
+            #pragma unroll 8
             for (int j = 0; j < valid_cols; j++) {
                 float qk_sum = 0.0f;
-                for (int k = 0; k < head_dim; k++) {
-                    qk_sum += q_ptr[row * head_dim + k] * k_ptr[j * head_dim + k];
+                const float4* q_vec = (const float4*)&q_ptr[row * head_dim];
+                const float4* k_vec = (const float4*)&k_ptr[j * head_dim];
+                
+                #pragma unroll
+                for (int k = 0; k < head_dim/4; k++) {
+                    float4 q_val = q_vec[k];
+                    float4 k_val = k_vec[k];
+                    qk_sum += q_val.x * k_val.x + q_val.y * k_val.y + 
+                             q_val.z * k_val.z + q_val.w * k_val.w;
                 }
                 scores[j] = qk_sum * scale;
                 local_max = fmaxf(local_max, scores[j]);
@@ -123,6 +147,7 @@ __global__ void flash_attention_kernel(
             // Update global max and rescale previous terms if needed
             if (local_max > max_val) {
                 float scale_factor = expf(max_val - local_max);
+                #pragma unroll
                 for (int k = 0; k < head_dim; k++) {
                     acc[k] *= scale_factor;
                 }
@@ -132,27 +157,41 @@ __global__ void flash_attention_kernel(
             
             // Compute attention and update accumulators
             float local_sum = 0.0f;
+            #pragma unroll 8
             for (int j = 0; j < valid_cols; j++) {
                 float exp_val = expf(scores[j] - max_val);
                 local_sum += exp_val;
-                for (int k = 0; k < head_dim; k++) {
-                    acc[k] += exp_val * v_ptr[j * head_dim + k];
+                const float4* v_vec = (const float4*)&v_ptr[j * head_dim];
+                
+                #pragma unroll
+                for (int k = 0; k < head_dim/4; k++) {
+                    float4 v_val = v_vec[k];
+                    acc[k*4] += exp_val * v_val.x;
+                    acc[k*4 + 1] += exp_val * v_val.y;
+                    acc[k*4 + 2] += exp_val * v_val.z;
+                    acc[k*4 + 3] += exp_val * v_val.w;
                 }
             }
             sum_exp += local_sum;
         }
         
-        // Write outputs
+        // Write outputs with vectorized stores
         if (row_block + row < seq_len) {
             M[row_block + row] = max_val;
             L[row_block + row] = sum_exp;
             float inv_sum = 1.0f / sum_exp;
-            for (int k = 0; k < head_dim; k++) {
-                O[(row_block + row) * head_dim + k] = acc[k] * inv_sum;
+            float4* O_vec = (float4*)&O[(row_block + row) * head_dim];
+            
+            #pragma unroll
+            for (int k = 0; k < head_dim/4; k++) {
+                float4 out_val;
+                out_val.x = acc[k*4] * inv_sum;
+                out_val.y = acc[k*4 + 1] * inv_sum;
+                out_val.z = acc[k*4 + 2] * inv_sum;
+                out_val.w = acc[k*4 + 3] * inv_sum;
+                O_vec[k] = out_val;
             }
         }
-        
-        free(acc);
     }
 }
 
@@ -295,7 +334,7 @@ int main(int argc, char** argv) {
     float total_time = 0;
     float proj_time = 0;
     float attn_time = 0;
-    
+
     CUDA_CHECK(cudaEventElapsedTime(&total_time, start, stop));
     CUDA_CHECK(cudaEventElapsedTime(&proj_time, proj_start, proj_stop));
     CUDA_CHECK(cudaEventElapsedTime(&attn_time, attn_start, attn_stop));
