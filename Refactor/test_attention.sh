@@ -15,6 +15,14 @@ CONFIGS=(
     "64 12 1024 128" # Large configuration
 )
 
+# Flash Capable Configurations
+#CONFIGS=(
+#    "16 4 256 32"      # Small configuration
+#    "32 8 512 64"      # Medium configuration
+#    "64 12 1024 128"   # Large configuration
+#    "80 14 1280 160"   # Extra Large configuration
+#    "96 16 1536 192"   # Ultra configuration#)
+
 # Function to run tests for a specific implementation
 run_tests() {
     local impl_dir=$1
