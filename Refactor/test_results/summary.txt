@@ -1,0 +1,70 @@
+Performance Summary
+
+Configuration Comparisons:
+--------------------------------------------------------------------------------
+Config               Basic (ms)      Flash (ms)      Speedup   
+--------------------------------------------------------------------------------
+16/4/256/32                    23.58           17.73       1.33x
+32/8/512/64                   371.46          182.62       2.03x
+64/12/1024/128               4923.75         1354.41       3.64x
+68/12/1088/132               5297.45         1537.31       3.45x
+72/13/1152/136               6682.24         2024.43       3.30x
+--------------------------------------------------------------------------------
+
+Average Speedup: 2.75x
+
+Detailed Timing Analysis:
+--------------------------------------------------------------------------------
+Basic Implementation:
+
+Config: 16/4/256/32
+  Projection Time: 1.27 ms
+  Attention Time:  0.00 ms
+  Total Time:      23.58 ms
+
+Config: 32/8/512/64
+  Projection Time: 55.88 ms
+  Attention Time:  0.00 ms
+  Total Time:      371.46 ms
+
+Config: 64/12/1024/128
+  Projection Time: 804.08 ms
+  Attention Time:  0.00 ms
+  Total Time:      4923.75 ms
+
+Config: 68/12/1088/132
+  Projection Time: 915.85 ms
+  Attention Time:  0.00 ms
+  Total Time:      5297.45 ms
+
+Config: 72/13/1152/136
+  Projection Time: 1240.24 ms
+  Attention Time:  0.00 ms
+  Total Time:      6682.24 ms
+
+Flash Implementation:
+
+Config: 16/4/256/32
+  Projection Time: 1.26 ms
+  Attention Time:  16.46 ms
+  Total Time:      17.73 ms
+
+Config: 32/8/512/64
+  Projection Time: 55.78 ms
+  Attention Time:  126.83 ms
+  Total Time:      182.62 ms
+
+Config: 64/12/1024/128
+  Projection Time: 811.37 ms
+  Attention Time:  543.03 ms
+  Total Time:      1354.41 ms
+
+Config: 68/12/1088/132
+  Projection Time: 924.27 ms
+  Attention Time:  613.03 ms
+  Total Time:      1537.31 ms
+
+Config: 72/13/1152/136
+  Projection Time: 1248.65 ms
+  Attention Time:  775.78 ms
+  Total Time:      2024.43 ms
