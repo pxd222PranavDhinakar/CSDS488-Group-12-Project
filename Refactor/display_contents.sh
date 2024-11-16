@@ -7,7 +7,7 @@ capture_output() {
 
     echo -e "\nFile Contents:"
 
-    find . -type f \( -name "*.cu" -o -name "*.h" -o -name "*.asm" -o -name "Makefile" \) | while read file; do
+    find . -type f \( -name "*.cu" -o -name "*.txt" -o -name "*.sh" -o -name "Makefile" \) | while read file; do
         echo -e "\n--- $file ---"
         echo "Location: $(dirname "$file")"
         echo "Contents:"
